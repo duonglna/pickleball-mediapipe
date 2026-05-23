@@ -45,7 +45,7 @@ function resetUIForIdle() {
   recordStateEl.classList.add("hidden");
   startBtn.disabled = false;
   stopBtn.disabled = true;
-  video.classList.remove("hidden");
+  // video already visible
   canvas.classList.remove("hidden");
 }
 
@@ -153,8 +153,9 @@ async function startRecording() {
     setResult("Đang ghi...", []);
 
     // Hide preview while recording, show only recording indicator.
-    video.classList.add("hidden");
-    canvas.classList.add("hidden");
+    // Keep video visible while recording
+    // video.classList.add("hidden");
+    canvas.classList.add("hidden"); // canvas still hidden
     recordStateEl.classList.remove("hidden");
 
     startBtn.disabled = true;
