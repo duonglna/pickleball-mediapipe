@@ -21,10 +21,12 @@ const classifier = new PickleballMotionClassifier();
 let poseLandmarker: PoseLandmarker | null = null;
 let drawingUtils: DrawingUtils;
 
-let mediaRecorder: MediaRecorder | null = null;
-let recordedChunks: Blob[] = [];
 let webcamStream: MediaStream | null = null;
 let isRecording = false;
+let rafId = 0;
+
+// Buffer frames during recording for post-analysis
+let frameBuffer: PoseFrame[] = [];
 
 function setStatus(text: string) {
   statusEl.textContent = text;
@@ -38,15 +40,13 @@ function setResult(main: string, secondary: string[] = []) {
   const extra = secondary.length
     ? `<small>Motion phụ: ${secondary.join(", ")}</small>`
     : "<small>Motion phụ: (không có)</small>";
-  resultEl.innerHTML = `Kết quả: ${main}${extra}`;
+  resultEl.innerHTML = `Kết quả: <strong>${main}</strong>${extra}`;
 }
 
 function resetUIForIdle() {
   recordStateEl.classList.add("hidden");
   startBtn.disabled = false;
   stopBtn.disabled = true;
-  // video already visible
-  canvas.classList.remove("hidden");
 }
 
 async function initPoseLandmarker() {
@@ -73,9 +73,9 @@ async function initPoseLandmarker() {
   setStatus("Ready");
 }
 
-function resizeCanvasToVideo(target: HTMLVideoElement) {
-  const w = target.videoWidth || 1280;
-  const h = target.videoHeight || 720;
+function resizeCanvasToVideo() {
+  const w = video.videoWidth || 1280;
+  const h = video.videoHeight || 720;
   canvas.width = w;
   canvas.height = h;
 }
@@ -93,7 +93,6 @@ function collectFeatures(frame: PoseFrame): MotionFeatures {
   return classifier.extractFeatures(frame);
 }
 
-// Keep drawing logic from previous implementation for debug/analysis view.
 function drawPose(landmarks: PosePoint[]) {
   drawingUtils.drawConnectors(landmarks as any, PoseLandmarker.POSE_CONNECTIONS, {
     color: "#56b6ff",
@@ -112,16 +111,33 @@ async function ensureWebcamStream() {
   return webcamStream;
 }
 
-function chooseSupportedMimeType() {
-  const candidates = [
-    "video/webm;codecs=vp9",
-    "video/webm;codecs=vp8",
-    "video/webm",
-  ];
-  for (const t of candidates) {
-    if (MediaRecorder.isTypeSupported(t)) return t;
+/** Capture 1 frame from webcam → extract landmarks → buffer for later analysis */
+function captureFrame(now: number) {
+  if (!poseLandmarker) return;
+
+  resizeCanvasToVideo();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  const result = poseLandmarker.detectForVideo(video, now);
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lms = result.landmarks[0].map(toPosePoint);
+    const frame: PoseFrame = { t: now, landmarks: lms };
+    frameBuffer.push(frame);
+
+    // Draw skeleton for live preview
+    drawPose(lms);
   }
-  return "video/webm";
+}
+
+/** Recording loop: capture frames at ~15fps while recording */
+function recordingLoop() {
+  if (!isRecording) return;
+
+  const now = performance.now();
+  captureFrame(now);
+  rafId = requestAnimationFrame(recordingLoop);
 }
 
 async function startRecording() {
@@ -132,37 +148,18 @@ async function startRecording() {
     video.srcObject = stream;
     await video.play();
 
-    recordedChunks = [];
-    const mimeType = chooseSupportedMimeType();
-    mediaRecorder = new MediaRecorder(stream, { mimeType });
-
-    mediaRecorder.ondataavailable = (evt: BlobEvent) => {
-      if (evt.data && evt.data.size > 0) recordedChunks.push(evt.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      setStatus("Analyzing recorded video...");
-      const blob = new Blob(recordedChunks, { type: mimeType });
-      await analyzeRecordedBlob(blob);
-      setStatus("Ready for next recording");
-      resetUIForIdle();
-    };
-
+    // Reset buffers
+    frameBuffer = [];
     isRecording = true;
     setMotion("Recording");
     setResult("Đang ghi...", []);
-
-    // Hide preview while recording, show only recording indicator.
-    // Keep video visible while recording
-    // video.classList.add("hidden");
-    canvas.classList.add("hidden"); // canvas still hidden
     recordStateEl.classList.remove("hidden");
 
     startBtn.disabled = true;
     stopBtn.disabled = false;
 
-    mediaRecorder.start(120);
     setStatus("Recording...");
+    rafId = requestAnimationFrame(recordingLoop);
   } catch (err) {
     console.error(err);
     setStatus("Cannot start recording");
@@ -171,82 +168,55 @@ async function startRecording() {
 }
 
 function stopRecording() {
-  if (!mediaRecorder || !isRecording) return;
+  if (!isRecording) return;
+
   isRecording = false;
   stopBtn.disabled = true;
   recordStateEl.classList.add("hidden");
-  setStatus("Stopping recorder...");
 
-  if (mediaRecorder.state !== "inactive") {
-    mediaRecorder.stop();
-  }
+  // Stop the capture loop
+  cancelAnimationFrame(rafId);
+
+  setStatus("Analyzing...");
+
+  // Run analysis on the buffered frames
+  setTimeout(() => {
+    analyzeFrames();
+    setStatus("Ready");
+    resetUIForIdle();
+  }, 50);
 }
 
-async function analyzeRecordedBlob(blob: Blob) {
-  if (!poseLandmarker) return;
+function analyzeFrames() {
+  if (!frameBuffer.length) {
+    setMotion("Không có dữ liệu");
+    setResult("Không phát hiện động tác", []);
+    return;
+  }
 
-  const tempVideo = document.createElement("video");
-  tempVideo.muted = true;
-  tempVideo.playsInline = true;
-  tempVideo.preload = "auto";
-  const blobUrl = URL.createObjectURL(blob);
-  tempVideo.src = blobUrl;
-
-  await new Promise<void>((resolve, reject) => {
-    tempVideo.onloadedmetadata = () => resolve();
-    tempVideo.onerror = () => reject(new Error("Cannot read recorded blob"));
-  });
-
-  await tempVideo.play();
-  tempVideo.pause();
-
-  resizeCanvasToVideo(tempVideo);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+  // Classify every collected frame
   const labels: string[] = [];
-
-  // Analyze frame-by-frame by seeking in small steps.
-  const fps = 15;
-  const step = 1 / fps;
-  const total = tempVideo.duration;
-
-  for (let t = 0; t < total; t += step) {
-    await seekTo(tempVideo, t);
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-
-    const tsMs = t * 1000;
-    const result = poseLandmarker.detectForVideo(tempVideo, tsMs);
-
-    if (result.landmarks && result.landmarks.length > 0) {
-      const lms = result.landmarks[0].map(toPosePoint);
-      const frame: PoseFrame = { t: tsMs, landmarks: lms };
-      const features = collectFeatures(frame);
-      const motion = classifier.classify(features);
-
-      if (motion.label !== "Unknown" && motion.label !== "No pose") {
-        labels.push(motion.label);
-      }
-
-      // Keep drawing for analysis preview after recording.
-      drawPose(lms);
+  for (const frame of frameBuffer) {
+    const features = collectFeatures(frame);
+    const motion = classifier.classify(features);
+    if (motion.label !== "Unknown" && motion.label !== "No pose") {
+      labels.push(motion.label);
     }
   }
 
-  tempVideo.pause();
-  URL.revokeObjectURL(blobUrl);
+  if (!labels.length) {
+    setMotion("Không rõ");
+    setResult("Không phát hiện rõ động tác", []);
+    return;
+  }
 
   const { topLabel, secondary } = summarizeLabels(labels);
   setMotion(topLabel);
   setResult(topLabel, secondary);
+  console.log(`Result: ${topLabel}`, `${frameBuffer.length} frames, ${labels.length} labeled`);
 }
 
 function summarizeLabels(labels: string[]) {
-  if (!labels.length) {
-    return { topLabel: "Không phát hiện rõ động tác", secondary: [] as string[] };
-  }
-
   const counts = new Map<string, number>();
   for (const label of labels) {
     counts.set(label, (counts.get(label) ?? 0) + 1);
@@ -257,17 +227,6 @@ function summarizeLabels(labels: string[]) {
   const secondary = sorted.slice(1, 4).map(([name, c]) => `${name} (${c})`);
 
   return { topLabel, secondary };
-}
-
-function seekTo(videoEl: HTMLVideoElement, time: number) {
-  return new Promise<void>((resolve) => {
-    const onSeeked = () => {
-      videoEl.removeEventListener("seeked", onSeeked);
-      resolve();
-    };
-    videoEl.addEventListener("seeked", onSeeked, { once: true });
-    videoEl.currentTime = Math.min(time, Math.max(0, videoEl.duration - 0.001));
-  });
 }
 
 startBtn.addEventListener("click", () => {
