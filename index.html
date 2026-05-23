@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pickleball MediaPipe Demo</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #0c1016;
+        color: #dce7ff;
+      }
+      .wrap {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        gap: 16px;
+        min-height: 100vh;
+        padding: 14px;
+        box-sizing: border-box;
+      }
+      .stage {
+        position: relative;
+        background: #03070c;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid #243246;
+      }
+      video, canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .panel {
+        border: 1px solid #243246;
+        border-radius: 14px;
+        padding: 12px;
+        background: #0e1622;
+      }
+      .badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid #3c5e82;
+        background: #132238;
+        margin-bottom: 8px;
+      }
+      ul { margin: 8px 0 0 18px; }
+      .small { opacity: 0.85; font-size: 13px; line-height: 1.45; }
+      .row { margin-bottom: 10px; }
+      #status { font-weight: 700; color: #8cd5ff; }
+      #motion { font-weight: 700; color: #9ff0b0; }
+      button, input[type=file] {
+        width: 100%;
+        margin-top: 8px;
+      }
+      button {
+        background: #1b5ca6;
+        color: white;
+        border: none;
+        border-radius: 10px;
+        padding: 10px;
+        cursor: pointer;
+      }
+      button:hover { filter: brightness(1.08); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="stage">
+        <video id="video" playsinline muted></video>
+        <canvas id="canvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="row"><span class="badge">Pickleball Pose Detector</span></div>
+        <div class="row">Trạng thái: <span id="status">Initializing...</span></div>
+        <div class="row">Động tác hiện tại: <span id="motion">Unknown</span></div>
+        <button id="webcamBtn">Dùng webcam</button>
+        <input id="videoFile" type="file" accept="video/*" />
+        <div class="small">
+          <b>Động tác hỗ trợ (rule-based):</b>
+          <ul>
+            <li>Serve</li>
+            <li>Dink</li>
+            <li>Drive</li>
+            <li>Lob</li>
+            <li>Volley</li>
+            <li>Forehand</li>
+            <li>Backhand</li>
+          </ul>
+          <p>
+            Ghi chú: đây là baseline heuristic để tái sử dụng. Có thể nâng độ chính xác bằng hiệu chỉnh ngưỡng theo dữ liệu thật hoặc thêm mô hình KNN sau này.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

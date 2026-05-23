@@ -1,0 +1,19 @@
+{
+  "name": "pickleball-mediapipe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pickleball motion detection using MediaPipe Pose Landmarker + TypeScript",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
